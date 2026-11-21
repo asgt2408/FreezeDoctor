@@ -95,46 +95,81 @@ static void pin(int cpu) {
         _exit(1);
     }
 }
+
 static pid_t spawn(int cpu, bool probe) {
-    pid_t parent = getpid(), pid = fork();
+    pid_t parent = getpid();
+    pid_t pid = fork();
+
     if (pid < 0) {
         perror("fork");
         exit(1);
     }
-    if (pid) {
+
+    if (pid > 0) {
         children[child_count++] = pid;
         return pid;
     }
+
     signal(SIGINT, SIG_DFL);
     signal(SIGTERM, SIG_DFL);
-    if (prctl(PR_SET_PDEATHSIG, SIGTERM) < 0 || getppid() != parent)
+
+    if (prctl(PR_SET_PDEATHSIG, SIGTERM) < 0)
         _exit(1);
+
+    if (getppid() != parent)
+        _exit(1);
+
     pin(cpu);
-    prctl(PR_SET_NAME, probe ? "fd-probe" : "fd-cpu-worker", 0, 0, 0);
-    volatile std::uint64_t value = 1;
-    if (!probe)
-        for (;;)
+
+    prctl(
+        PR_SET_NAME,
+        probe ? "fd-probe" : "fd-cpu-worker",
+        0, 0, 0
+    );
+
+    volatile uint64_t value = 1;
+
+    if (!probe) {
+        while (true) {
             value = value * 6364136223846793005ULL + 1;
-    std::int64_t release = now_ns(CLOCK_MONOTONIC) + PERIOD_NS;
-    for (;;) {
+        }
+    }
+
+    int64_t release = now_ns(CLOCK_MONOTONIC) + PERIOD_NS;
+
+    while (true) {
         sleep_until(release);
-        std::int64_t wake = now_ns(CLOCK_MONOTONIC), start = now_ns(CLOCK_PROCESS_CPUTIME_ID);
+
+        int64_t wake = now_ns(CLOCK_MONOTONIC);
+        int64_t cpu_start = now_ns(CLOCK_PROCESS_CPUTIME_ID);
         do {
-            for (int j = 0; j < 1000; j++)
+            for (int j = 0; j < 1000; j++) {
                 value = value * 6364136223846793005ULL + 1;
-        } while (now_ns(CLOCK_PROCESS_CPUTIME_ID) - start < SERVICE_NS);
-        std::int64_t finish = now_ns(CLOCK_MONOTONIC);
-        unsigned n = shared->count.load(std::memory_order_relaxed);
+            }
+        } while (
+            now_ns(CLOCK_PROCESS_CPUTIME_ID) - cpu_start < SERVICE_NS
+        );
+
+        int64_t finish = now_ns(CLOCK_MONOTONIC);
+
+        unsigned n = shared->count.load(memory_order_relaxed);
+
         if (n < CAPACITY) {
-            shared->samples[n] = Measurement{(finish - release) / 1e6, (wake - release) / 1e6};
-            shared->count.store(n + 1, std::memory_order_release);
+            shared->samples[n] = Measurement{
+                (finish - release) / 1e6,
+                (wake - release) / 1e6
+            };
+            shared->count.store(n + 1, memory_order_release);
         }
         release += PERIOD_NS;
-        /* Skip missed releases: do not manufacture an ever-growing backlog. */
-        if (release < finish)
+
+        if (release < finish) {
             release = finish + PERIOD_NS;
+        }
     }
 }
+
+
 // /proc/PID/stat fields after the final ')' begin at field 3 (state).
 static Proc observe(pid_t pid) {
     Proc p{};
