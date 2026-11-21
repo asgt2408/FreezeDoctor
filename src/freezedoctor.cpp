@@ -40,7 +40,7 @@ static_assert(std::atomic<unsigned>::is_always_lock_free,
               "The shared probe counter must be lock-free on this Linux target");
 struct Stats {
     unsigned n{};
-    double mean{}, p95{}, maximum{};
+    double mean{}, p95{}, maximum{},minimum{};
 };
 struct Proc {
     unsigned long long ticks{}, wait_ns{};
@@ -206,22 +206,32 @@ static Proc observe(pid_t pid) {
         p.wait_ns = 0;
     return p;
 }
+
 static Stats stats(unsigned begin, unsigned end) {
     Stats s{};
+
     if (end <= begin)
         return s;
+
     s.n = end - begin;
     std::vector<double> v(s.n);
+
     for (unsigned i = 0; i < s.n; i++) {
         v[i] = shared->samples[begin + i].response_ms;
         s.mean += v[i];
     }
+
     s.mean /= s.n;
+
     std::sort(v.begin(), v.end());
+
+    s.minimum = v[0];
     s.maximum = v[s.n - 1];
     s.p95 = v[static_cast<unsigned>(std::ceil(.95 * s.n)) - 1];
+
     return s;
 }
+
 struct Phase {
     unsigned begin{}, end{};
     Stats stats{};
@@ -292,11 +302,27 @@ static Phase phase(const char *name, double seconds, pid_t *workers, int count, 
     result.stats = stats(result.begin, result.end);
     return result;
 }
+
 static void json_stats(FILE *f, const char *key, Stats s, bool comma) {
     fprintf(
-        f, "  \"%s\": {\"samples\": %u, \"mean_ms\": %.6f, \"p95_ms\": %.6f, \"max_ms\": %.6f}%s\n",
-        key, s.n, s.mean, s.p95, s.maximum, comma ? "," : "");
+        f,
+        "  \"%s\": {"
+        "\"samples\": %u, "
+        "\"mean_ms\": %.6f, "
+        "\"min_ms\": %.6f, "
+        "\"p95_ms\": %.6f, "
+        "\"max_ms\": %.6f"
+        "}%s\n",
+        key,
+        s.n,
+        s.mean,
+        s.minimum,
+        s.p95,
+        s.maximum,
+        comma ? "," : ""
+    );
 }
+
 static void usage(const char *exe) {
     printf("Usage: %s [--seconds 2..60] [--workers 1..16] [--cpu N] [--report FILE] [--csv FILE] "
            "[--no-recovery]\nDefault: 4 seconds per phase, 4 workers, first allowed CPU, "
