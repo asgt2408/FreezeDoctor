@@ -23,6 +23,8 @@
 #include <unistd.h>
 #include <vector>
 
+using namespace std;
+
 constexpr int MAX_WORKERS = 16;
 constexpr unsigned CAPACITY = 131072;
 constexpr std::int64_t SAMPLE_NS = 500000000LL;
