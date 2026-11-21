@@ -32,45 +32,62 @@ constexpr std::int64_t SERVICE_NS = 2000000LL;
 struct Measurement {
     double response_ms{}, wake_ms{};
 };
+
 struct Shared {
-    std::atomic<unsigned> count{0};
-    std::array<Measurement, CAPACITY> samples{};
+    atomic<unsigned> count{0};
+    array<Measurement, CAPACITY> samples{};
 };
-static_assert(std::atomic<unsigned>::is_always_lock_free,
+
+static_assert(atomic<unsigned>::is_always_lock_free,
               "The shared probe counter must be lock-free on this Linux target");
+
 struct Stats {
     unsigned n{};
     double mean{}, p95{}, maximum{};
 };
+
 struct Proc {
     unsigned long long ticks{}, wait_ns{};
     char state{};
     int nice{};
     bool valid{};
 };
+
 static volatile sig_atomic_t interrupted;
-static std::array<pid_t, MAX_WORKERS + 1> children{};
+static array<pid_t, MAX_WORKERS + 1> children{};
 static unsigned child_count;
 static Shared *shared;
 static FILE *csv;
+
 static void on_signal(int sig) {
     (void)sig;
     interrupted = 1;
 }
-static std::int64_t now_ns(clockid_t clock) {
+
+static int64_t now_ns(clockid_t clock) {
     struct timespec t;
+
     if (clock_gettime(clock, &t)) {
         perror("clock_gettime");
         exit(1);
     }
-    return static_cast<std::int64_t>(t.tv_sec) * 1000000000LL + t.tv_nsec;
+
+    return static_cast<int64_t>(t.tv_sec) * 1000000000LL + t.tv_nsec;
 }
-static void sleep_until(std::int64_t when) {
-    struct timespec t = {when / 1000000000LL, when % 1000000000LL};
+
+static void sleep_until(int64_t when) {
+    struct timespec t = {
+        when / 1000000000LL,
+        when % 1000000000LL
+    };
+
     int rc;
-    while ((rc = clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, &t, nullptr)) == EINTR &&
+
+    while ((rc = clock_nanosleep(
+                CLOCK_MONOTONIC, TIMER_ABSTIME, &t, nullptr)) == EINTR &&
            !interrupted) {
     }
+
     if (rc && rc != EINTR) {
         errno = rc;
         perror("clock_nanosleep");
