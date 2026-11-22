@@ -190,37 +190,57 @@ static pid_t spawn(int cpu, bool probe) {
 // /proc/PID/stat fields after the final ')' begin at field 3 (state).
 static Proc observe(pid_t pid) {
     Proc p{};
-    const std::string directory = "/proc/" + std::to_string(pid);
-    std::ifstream stat_file(directory + "/stat");
-    std::string line;
-    if (!std::getline(stat_file, line))
+
+    const string directory = "/proc/" + to_string(pid);
+    ifstream stat_file(directory + "/stat");
+
+    string line;
+    if (!getline(stat_file, line))
         return p;
+
+    // Process names may contain spaces or parentheses.
     const auto close = line.rfind(')');
-    if (close == std::string::npos)
+    if (close == string::npos)
         return p;
-    std::istringstream fields(line.substr(close + 1));
-    std::string ignored;
+
+    istringstream fields(line.substr(close + 1));
+
+    string ignored;
     unsigned long long user_ticks{}, system_ticks{};
+
+    // Field 3: process state.
     if (!(fields >> p.state))
         return p;
+
+    // Skip fields 4 through 13.
     for (int field = 4; field <= 13; ++field) {
         if (!(fields >> ignored))
             return p;
     }
+
+    // Fields 14 and 15: user and kernel CPU ticks.
     if (!(fields >> user_ticks >> system_ticks))
         return p;
+
+    // Skip fields 16 through 18.
     for (int field = 16; field <= 18; ++field) {
         if (!(fields >> ignored))
             return p;
     }
+
+    // Field 19: nice value.
     if (!(fields >> p.nice))
         return p;
+
     p.ticks = user_ticks + system_ticks;
     p.valid = true;
-    std::ifstream schedstat(directory + "/schedstat");
+
+    ifstream schedstat(directory + "/schedstat");
     unsigned long long runtime{};
+
     if (!(schedstat >> runtime >> p.wait_ns))
         p.wait_ns = 0;
+
     return p;
 }
 
