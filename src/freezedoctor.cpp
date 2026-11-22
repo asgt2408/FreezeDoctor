@@ -257,66 +257,125 @@ static int streak, max_streak;
 static bool detected;
 static pid_t contributor;
 static double contributor_cpu;
-static Phase phase(const char *name, double seconds, pid_t *workers, int count, double threshold,
-                   bool analyze) {
+
+static Phase phase(
+    const char *name,
+    double seconds,
+    pid_t *workers,
+    int count,
+    double threshold,
+    bool analyze
+) {
     Phase result{};
-    result.begin = shared->count.load(std::memory_order_acquire);
+    result.begin = shared->count.load(memory_order_acquire);
+
+    array<Proc, MAX_WORKERS> prior{};
     unsigned previous = result.begin;
-    std::array<Proc, MAX_WORKERS> prior{};
+
     for (int i = 0; i < count; i++)
         prior[i] = observe(workers[i]);
-    std::int64_t start = now_ns(CLOCK_MONOTONIC), last = start,
-                 end = start + static_cast<std::int64_t>(seconds * 1e9), next = start;
+
+    int64_t start = now_ns(CLOCK_MONOTONIC);
+    int64_t last = start;
+    int64_t end = start + static_cast<int64_t>(seconds * 1e9);
+    int64_t next = start;
+
     printf("\n[%s] %.1f seconds\n", name, seconds);
+
     while (!interrupted && next < end) {
         next += SAMPLE_NS;
+
         if (next > end)
             next = end;
+
         sleep_until(next);
+
         if (interrupted)
             break;
-        std::int64_t current = now_ns(CLOCK_MONOTONIC);
-        unsigned n = shared->count.load(std::memory_order_acquire);
+
+        int64_t current = now_ns(CLOCK_MONOTONIC);
+        unsigned n = shared->count.load(memory_order_acquire);
+
         Stats window = stats(previous, n);
-        double total = 0, best = 0;
+
+        double total = 0;
+        double best = 0;
         pid_t best_pid = 0;
+
         for (int i = 0; i < count; i++) {
             Proc p = observe(workers[i]);
+
             if (!p.valid || p.state == 'Z') {
-                fprintf(stderr, "Worker %d exited unexpectedly\n", workers[i]);
+                fprintf(
+                    stderr,
+                    "Worker %d exited unexpectedly\n",
+                    workers[i]
+                );
                 exit(1);
             }
-            double cpu = (p.ticks - prior[i].ticks) * 100.0 / sysconf(_SC_CLK_TCK) /
-                         ((current - last) / 1e9);
+
+            double cpu =
+                (p.ticks - prior[i].ticks) * 100.0 /
+                sysconf(_SC_CLK_TCK) /
+                ((current - last) / 1e9);
+
             total += cpu;
+
             if (cpu > best) {
                 best = cpu;
                 best_pid = workers[i];
             }
+
             prior[i] = p;
         }
-        bool abnormal = window.n && window.mean > threshold && total >= 30;
+
+        bool abnormal =
+            window.n > 0 &&
+            window.mean > threshold &&
+            total >= 30;
+
         if (analyze) {
             streak = abnormal ? streak + 1 : 0;
+
             if (streak > max_streak)
                 max_streak = streak;
+
             if (streak >= 3) {
                 detected = true;
                 contributor = best_pid;
                 contributor_cpu = best;
             }
         }
-        printf("  samples=%-3u response=%7.3f ms  p95=%7.3f ms  workload CPU=%5.1f%% %s\n",
-               window.n, window.mean, window.p95, total,
-               analyze && abnormal ? "DELAY + CONTENTION" : "");
-        for (unsigned i = previous; i < n; i++)
-            fprintf(csv, "%s,%u,%.6f,%.6f,%.3f\n", name, i, shared->samples[i].response_ms,
-                    shared->samples[i].wake_ms, total);
+
+        printf(
+            "  samples=%-3u response=%7.3f ms  "
+            "p95=%7.3f ms  workload CPU=%5.1f%% %s\n",
+            window.n,
+            window.mean,
+            window.p95,
+            total,
+            analyze && abnormal ? "DELAY + CONTENTION" : ""
+        );
+
+        for (unsigned i = previous; i < n; i++) {
+            fprintf(
+                csv,
+                "%s,%u,%.6f,%.6f,%.3f\n",
+                name,
+                i,
+                shared->samples[i].response_ms,
+                shared->samples[i].wake_ms,
+                total
+            );
+        }
+
         previous = n;
         last = current;
     }
+
     result.end = previous;
     result.stats = stats(result.begin, result.end);
+
     return result;
 }
 
